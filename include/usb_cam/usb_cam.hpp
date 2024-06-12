@@ -130,6 +130,7 @@ typedef struct
   bool auto_white_balance;
   bool autoexposure;
   bool autofocus;
+  bool stream_color;
 } parameters_t;
 
 typedef struct

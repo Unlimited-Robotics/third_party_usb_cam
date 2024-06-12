@@ -41,7 +41,7 @@
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "std_srvs/srv/set_bool.hpp"
-
+#include <rmw/qos_profiles.h>
 #include "usb_cam/usb_cam.hpp"
 
 

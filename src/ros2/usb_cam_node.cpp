@@ -30,7 +30,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
-
+#include <filesystem>
 #include "usb_cam/usb_cam_node.hpp"
 #include "usb_cam/utils.hpp"
 
@@ -38,6 +38,19 @@ const char BASE_TOPIC_NAME[] = "image_raw";
 
 namespace usb_cam
 {
+static const rmw_qos_profile_t best_effort_qos_profile =
+{
+    RMW_QOS_POLICY_HISTORY_KEEP_LAST,
+    1,
+    RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT,
+    RMW_QOS_POLICY_DURABILITY_VOLATILE,
+    RMW_QOS_DEADLINE_DEFAULT,
+    RMW_QOS_LIFESPAN_DEFAULT,
+    RMW_QOS_POLICY_LIVELINESS_SYSTEM_DEFAULT,
+    RMW_QOS_LIVELINESS_LEASE_DURATION_DEFAULT,
+    false
+};
+
 
 UsbCamNode::UsbCamNode(const rclcpp::NodeOptions & node_options)
 : Node("usb_cam", node_options),
@@ -46,7 +59,7 @@ UsbCamNode::UsbCamNode(const rclcpp::NodeOptions & node_options)
   m_compressed_img_msg(nullptr),
   m_image_publisher(std::make_shared<image_transport::CameraPublisher>(
       image_transport::create_camera_publisher(this, BASE_TOPIC_NAME,
-      rclcpp::QoS {100}.get_rmw_qos_profile()))),
+      best_effort_qos_profile))),
   m_compressed_image_publisher(nullptr),
   m_compressed_cam_info_publisher(nullptr),
   m_parameters(),
@@ -83,6 +96,7 @@ UsbCamNode::UsbCamNode(const rclcpp::NodeOptions & node_options)
   this->declare_parameter("exposure", 100);
   this->declare_parameter("autofocus", false);
   this->declare_parameter("focus", -1);  // 0-255, -1 "leave alone"
+  this->declare_parameter("stream_color", false);
 
   get_params();
   init();
@@ -90,6 +104,7 @@ UsbCamNode::UsbCamNode(const rclcpp::NodeOptions & node_options)
     std::bind(
       &UsbCamNode::parameters_callback, this,
       std::placeholders::_1));
+
 }
 
 UsbCamNode::~UsbCamNode()
@@ -119,6 +134,15 @@ void UsbCamNode::service_capture(
     m_camera->stop_capturing();
     response->message = "Stop Capturing";
   }
+}
+
+std::string resolve_device_path(const std::string & path)
+{
+  if (std::filesystem::is_symlink(path)) {
+    // For some reason read_symlink only returns videox
+    return "/dev/" + std::string(std::filesystem::read_symlink(path));
+  }
+  return path;
 }
 
 void UsbCamNode::init()
@@ -215,7 +239,7 @@ void UsbCamNode::get_params()
       "camera_name", "camera_info_url", "frame_id", "framerate", "image_height", "image_width",
       "io_method", "pixel_format", "av_device_format", "video_device", "brightness", "contrast",
       "saturation", "sharpness", "gain", "auto_white_balance", "white_balance", "autoexposure",
-      "exposure", "autofocus", "focus"
+      "exposure", "autofocus", "focus", "stream_color"
     }
   );
 
@@ -246,7 +270,7 @@ void UsbCamNode::assign_params(const std::vector<rclcpp::Parameter> & parameters
     } else if (parameter.get_name() == "av_device_format") {
       m_parameters.av_device_format = parameter.value_to_string();
     } else if (parameter.get_name() == "video_device") {
-      m_parameters.device_name = parameter.value_to_string();
+      m_parameters.device_name = resolve_device_path(parameter.value_to_string());
     } else if (parameter.get_name() == "brightness") {
       m_parameters.brightness = parameter.as_int();
     } else if (parameter.get_name() == "contrast") {
@@ -269,6 +293,8 @@ void UsbCamNode::assign_params(const std::vector<rclcpp::Parameter> & parameters
       m_parameters.autofocus = parameter.as_bool();
     } else if (parameter.get_name() == "focus") {
       m_parameters.focus = parameter.as_int();
+    } else if (parameter.get_name() == "stream_color") {
+      m_parameters.stream_color = parameter.as_bool();
     } else {
       RCLCPP_WARN(this->get_logger(), "Invalid parameter name: %s", parameter.get_name().c_str());
     }
@@ -410,7 +436,7 @@ rcl_interfaces::msg::SetParametersResult UsbCamNode::parameters_callback(
 
 void UsbCamNode::update()
 {
-  if (m_camera->is_capturing()) {
+  if (m_camera->is_capturing() && m_parameters.stream_color) {
     // If the camera exposure longer higher than the framerate period
     // then that caps the framerate.
     // auto t0 = now();
